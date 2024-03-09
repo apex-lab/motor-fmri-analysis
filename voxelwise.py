@@ -1,6 +1,8 @@
+from util.bids import DataSink
 from bids import BIDSLayout
 import numpy as np
 import os
+import re
 
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
@@ -17,27 +19,44 @@ from mne.parallel import parallel_func
 from time import perf_counter
 from joblib import dump, load
 
+import argparse
+
 # general hard coded vars
 DATA_DIR = 'bids_temp'
-SUB = '01'
-# permutation test args
 N_PERMUTATIONS = 5000
-BLOCK_SIZE = 10
+BLOCK_SIZE = 10 # in TRs, for block permutation test
+
+parser = argparse.ArgumentParser()
+parser.add_argument('sub', type = str)
+args = parser.parse_args()
+sub = args.sub
 
 layout = BIDSLayout(DATA_DIR, derivatives = True)
+sink = DataSink(
+    os.path.join(layout.root, 'derivatives'),
+    workflow = 'voxelwise'
+)
 
-# load X's
-X_fs = layout.get(subject = SUB, desc = 'downsamp', suffix = 'activations')
+# load X's and run indices
+X_fs = layout.get(
+    subject = sub, task = 'motor', desc = 'downsamp', suffix = 'activations'
+    )
 Xs = [x.get_df() for x in X_fs]
 Xs = [x.loc[:, (x != 0).any(axis = 0)] for x in Xs] # rm cols w/ all 0s
 X = np.concatenate([x.to_numpy() for x in Xs], axis = 0)
-
-# load y's & run idx
-bold_fs = layout.get(subject = SUB, desc = 'clean', suffix = 'bold')
-bold = [np.load(b.path) for b in bold_fs]
-run = [np.full(b.shape[0], i + 1) for i, b in enumerate(bold)]
-bold = np.concatenate(bold, axis = 0)
+run_idxs = [int(re.findall('run-(\w+)_', f.path)[0]) for f in X_fs]
+run = [np.full(x.shape[0], r) for x, r in zip(Xs, run_idxs)]
 run = np.concatenate(run)
+
+# load y's
+bold_fs = layout.get(
+    subject = sub, task = 'motor', desc = 'clean', suffix = 'bold'
+    )
+run_idxs_b = [int(re.findall('run-(\w+)_', f.path)[0]) for f in bold_fs]
+for i, j in zip(run_idxs, run_idxs_b):
+    assert(i == j) # ensure we loaded runs in the same order
+bold = [np.load(b.path) for b in bold_fs]
+bold = np.concatenate(bold, axis = 0)
 
 assert(X.shape[0] == bold.shape[0])
 assert(X.shape[0] == run.shape[0])
@@ -71,14 +90,24 @@ pipeline = make_pipeline(
         solver_params = dict(n_targets_batch = 1000)
     )
 )
-t0 = perf_counter()
-if os.path.exists('model.joblib'):
-    pipeline = load('model.joblib')
+
+fpath = sink.get_path(
+    subject = sub,
+    session = '1',
+    task = 'motor',
+    desc = 'model',
+    datatype = 'func',
+    suffix = 'reg',
+    extension = '.joblib'
+)
+if os.path.exists(fpath):
+    pipeline = load(fpath)
 else:
+    t0 = perf_counter()
     pipeline.fit(X_train, y_train)
-    dump(pipeline, 'model.joblib')
-t1 = perf_counter()
-print('Training took %.03f minutes for ANN model.'%((t1 - t0)/60))
+    dump(pipeline, fpath)
+    t1 = perf_counter()
+    print('Training took %.03f minutes for ANN model.'%((t1 - t0)/60))
 
 ## generate permutation null distribution
 yhat = pipeline.predict(X_test)
@@ -110,7 +139,16 @@ out = parallel(
 )
 t1 = perf_counter()
 H0 = np.stack(out, axis = 0)
-np.save('H0_main.npy', H0, allow_pickle = False)
+fpath = sink.get_path(
+    subject = sub,
+    session = '1',
+    task = 'motor',
+    desc = 'model',
+    datatype = 'func',
+    suffix = 'r2',
+    extension = '.npy'
+)
+np.save(fpath, H0, allow_pickle = False)
 print('Finished computing null distribution in %.03f minutes'%((t1 - t0)/60))
 
 ## fit control model
@@ -125,14 +163,23 @@ control_pipeline = make_pipeline(
     )
 )
 
-t0 = perf_counter()
-if os.path.exists('control.joblib'):
-    control_pipeline = load('control.joblib')
+fpath = sink.get_path(
+    subject = sub,
+    session = '1',
+    task = 'motor',
+    desc = 'control',
+    datatype = 'func',
+    suffix = 'reg',
+    extension = '.joblib'
+)
+if os.path.exists(fpath):
+    control_pipeline = load(fpath)
 else:
+    t0 = perf_counter()
     control_pipeline.fit(X_train[:, feat_types == 'input'], y_train)
-    dump(control_pipeline, 'control.joblib')
-t1 = perf_counter()
-print('Training took %.03f minutes for control model.'%((t1 - t0)/60))
+    dump(control_pipeline, fpath)
+    t1 = perf_counter()
+    print('Training took %.03f minutes for control model.'%((t1 - t0)/60))
 
 # and generate permutation null for control model as well
 yhat = control_pipeline.predict(X_test[:, feat_types == 'input'])
@@ -144,7 +191,16 @@ out = parallel(
 )
 t1 = perf_counter()
 H0_control = np.stack(out, axis = 0)
-np.save('H0_control.npy', H0_control, allow_pickle = False)
+fpath = sink.get_path(
+    subject = sub,
+    session = '1',
+    task = 'motor',
+    desc = 'control',
+    datatype = 'func',
+    suffix = 'r2',
+    extension = '.npy'
+)
+np.save(fpath, H0_control, allow_pickle = False)
 print('Finished computing null distribution in %.03f minutes'%((t1 - t0)/60))
 
 ## permutation test comparing the two models
@@ -188,5 +244,14 @@ out = parallel(
 )
 t1 = perf_counter()
 H0_delta = np.stack(out, axis = 0)
-np.save('H0_delta.npy', H0_delta, allow_pickle = False)
+fpath = sink.get_path(
+    subject = sub,
+    session = '1',
+    task = 'motor',
+    desc = 'difference',
+    datatype = 'func',
+    suffix = 'r2',
+    extension = '.npy'
+)
+np.save(fpath, H0_delta, allow_pickle = False)
 print('Finished computing paired null in %.03f minutes'%((t1 - t0)/60))

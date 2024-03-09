@@ -190,6 +190,7 @@ def compute_calibration(layout, sub):
     )
     fpath = sink.get_path(
         subject = sub,
+        session = '1',
         task = 'calibration',
         desc = 'mapping',
         datatype = 'motion',

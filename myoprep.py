@@ -117,6 +117,7 @@ def process_motion(layout, sub, run, n_volumes):
     )
     fpath = sink.get_path(
         subject = sub,
+        session = '1',
         task = 'motor',
         run = run,
         desc = 'downsamp',
@@ -125,6 +126,12 @@ def process_motion(layout, sub, run, n_volumes):
         extension = '.tsv'
     )
     df.to_csv(fpath, sep = '\t', index = False)
+    fpath = fpath.replace('downsamp', 'fullsamp')
+    fpath = fpath.replace('activations', 'observations')
+    obs_cropped = obs[tr_timestamps[0]:tr_timestamps[-1]]
+    times = obs_cropped.index.values
+    obs_cropped.insert(0, 'time', times)
+    obs_cropped.to_csv(fpath, sep = '\t', index = False)
 
 
 def process_bold(layout, sub, run):
@@ -149,6 +156,7 @@ def process_bold(layout, sub, run):
     ## load fMRIPrepped BOLD data on fsaverage surface
     left_f, _, right_f, sidecar_f = layout.get(
         subject = sub,
+        task = 'motor',
         run = run,
         space = 'fsaverage',
         suffix = 'bold',
@@ -172,6 +180,7 @@ def process_bold(layout, sub, run):
     )
     fpath = sink.get_path(
         subject = sub,
+        session = '1',
         task = 'motor',
         run = run,
         desc = 'clean',
