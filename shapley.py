@@ -5,6 +5,9 @@ import torch
 import re
 import os
 import argparse
+from joblib import load 
+from torch.autograd import Variable
+from statsmodels.stats.multitest import multipletests
 
 from util.bids import DataSink
 from util.myosuite import get_activations
@@ -14,7 +17,7 @@ BIDS_DIR = 'bids_temp'
 POLICY_FILE = 'best_policy.pickle'
 
 N_BACKGROUND_SAMPLES = 100
-N_TEST_SET_SAMPLES = 1000
+N_TEST_SET_SAMPLES = 10
 
 this_dir = os.path.dirname(os.path.abspath(__file__))
 bids_dir = os.path.join(this_dir, BIDS_DIR)
@@ -44,14 +47,11 @@ def main(layout, sub):
 
     policy = load(policy_file)
 
-    # load scores + null distribution for voxelwise model
-    r2_f = layout.get(subject = sub, desc = 'difference', suffix = 'r2')[0]
-    H0 = np.load(r2_f.path)
-
-    # get rejection mask for model
-    H0_max = H0.max(1)
-    thres = np.quantile(H0_max, 1 - ALPHA)
-    mask = H0[0,:] >= thres
+    # get rejection mask for voxelwise model
+    control_f, diff_f, model_f = layout.get(subject = sub, suffix = 'r2', scope = 'voxelwise')
+    H0 = np.load(model_f.path)
+    ps = (H0[0,:] <= H0).mean(0)
+    mask, _, _, _ = multipletests(ps, method = 'fdr_bh', alpha = ALPHA)
 
     # load X's and run indices
     X_fs = layout.get(

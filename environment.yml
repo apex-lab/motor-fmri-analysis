@@ -12,6 +12,7 @@ dependencies:
   - ipython
   - jupyter
   - mujoco=2.3.7
+  - statsmodels
   - pip
   - pip:
     - myosuite==2.2
