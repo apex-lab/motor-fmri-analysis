@@ -5,7 +5,7 @@ import torch
 import gym
 import bids
 
-def get_activations(model, x):
+def get_activations(model, x, return_numpy = True):
     '''
     Parameters
     ----------
@@ -13,6 +13,8 @@ def get_activations(model, x):
     x : a ([n_observations,] observation_size) np.array
         An observation vector in same form as returned by env.step().
         Observations are of shape (jnt_pos + jnt_vel + last_action + pos_error,)
+    return_numpy : bool, default: True
+        Whether to return layers as numpy arrays or pytorch tensors
 
     Returns
     ---------
@@ -24,15 +26,20 @@ def get_activations(model, x):
     `model` can be obtained from a myosuite NPG baseline model `pi` which
     has been loaded with pickle with `model = pi.model`.
     '''
+    if return_numpy:
+        detach = lambda a: a.detach().numpy().astype(float)
+        out = torch.from_numpy(x).float()
+    else:
+        detach = lambda a: a
+        out = x
     activations = []
-    out = torch.from_numpy(x).float()
     out = (out - model.in_shift) / (model.in_scale + 1e-8)
-    activations.append(out.detach().numpy()) # input layer
+    activations.append(detach(out)) # input layer
     for i in range(len(model.fc_layers)):
       out = model.fc_layers[i](out)
       if i != len(model.fc_layers) - 1: # i.e. not output layer
           out = model.nonlinearity(out)
-      activations.append(out.detach().numpy().astype(float))
+      activations.append(detach(out))
     return activations
 
 def get_joints_and_muscles(env_name = 'myoHandPoseRandom-v0'):
