@@ -5,7 +5,7 @@ import torch
 import re
 import os
 import argparse
-from joblib import load 
+from joblib import load
 from torch.autograd import Variable
 from statsmodels.stats.multitest import multipletests
 
@@ -17,7 +17,7 @@ BIDS_DIR = 'bids_temp'
 POLICY_FILE = 'best_policy.pickle'
 
 N_BACKGROUND_SAMPLES = 100
-N_TEST_SET_SAMPLES = 10
+N_TEST_SET_SAMPLES = 1000
 
 this_dir = os.path.dirname(os.path.abspath(__file__))
 bids_dir = os.path.join(this_dir, BIDS_DIR)
@@ -25,12 +25,13 @@ policy_file = os.path.join(this_dir, POLICY_FILE)
 
 class EncodingModel(torch.nn.Module):
 
-    def __init__(self, policy, scaler, coefs):
+    def __init__(self, policy, scaler, coefs, non_empty):
         super().__init__()
         self._mu = torch.from_numpy(scaler.mean_).float()
         self._std = torch.from_numpy(scaler.scale_).float()
         self.weights = torch.from_numpy(coefs).float()
         self._model = policy.model
+        self._non_empty = non_empty
 
     def forward(self, x):
         '''
@@ -39,7 +40,7 @@ class EncodingModel(torch.nn.Module):
         '''
         acts = get_activations(self._model, x, return_numpy = False)
         acts = torch.concat(acts, axis = 1)
-        acts = acts[:, non_empty]
+        acts = acts[:, self._non_empty]
         acts_scaled = (acts - self._mu) / self._std
         return acts_scaled @ self.weights
 
@@ -48,7 +49,9 @@ def main(layout, sub):
     policy = load(policy_file)
 
     # get rejection mask for voxelwise model
-    control_f, diff_f, model_f = layout.get(subject = sub, suffix = 'r2', scope = 'voxelwise')
+    control_f, diff_f, model_f = layout.get(
+        subject = sub, suffix = 'r2', scope = 'voxelwise'
+    )
     H0 = np.load(model_f.path)
     ps = (H0[0,:] <= H0).mean(0)
     mask, _, _, _ = multipletests(ps, method = 'fdr_bh', alpha = ALPHA)
@@ -93,7 +96,10 @@ def main(layout, sub):
     del primal_coef_per_delay
 
     # concatenate encoding weights with neural network
-    model = EncodingModel(policy, scaler, average_coef[:, mask])
+    acts = get_activations(policy.model, X)
+    acts = np.concatenate(acts, axis = 1)
+    non_empty = (acts != 0).any(axis = 0) # mask to remove empty activations
+    model = EncodingModel(policy, scaler, average_coef[:, mask], non_empty)
 
     ## and explain predictions!
     np.random.seed(0)
@@ -112,7 +118,7 @@ def main(layout, sub):
         check_additivity = False
     )
 
-    # aggregate over feature spaces and project to fsaverage space
+    # aggregate shap values over feature types and project to fsaverage space
     sv = np.stack(shap_values, -1) # stack targets
     feat_space_svs = []
     for ft in ('pos', 'vel', 'err'):
@@ -125,6 +131,7 @@ def main(layout, sub):
         feat_space_svs.append(shapvals_fs)
     sv = np.stack(feat_space_svs)
 
+    ## and save!
     sink = DataSink(
         os.path.join(layout.root, 'derivatives'),
         workflow = 'shapley'
