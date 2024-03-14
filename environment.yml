@@ -1,0 +1,23 @@
+name: motor-fmri
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.8
+  - pytorch=2.2
+  - mne=1.6
+  - nilearn=0.10
+  - scikit-learn=1.3.2
+  - ipython
+  - jupyter
+  - mujoco=2.3.7
+  - pip
+  - pip:
+    - myosuite==2.2
+    - git+https://github.com/aravindr93/mjrl.git@pvr_beta_1vk
+    - pybids
+    - mne-bids==0.14
+    - himalaya==0.4.2
+    - voxelwise_tutorials==0.1.6
+    - shap==0.44

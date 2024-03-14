@@ -3,7 +3,6 @@ import numpy as np
 import myosuite
 import torch
 import gym
-import bids
 
 def get_activations(model, x, return_numpy = True):
     '''
