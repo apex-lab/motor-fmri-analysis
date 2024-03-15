@@ -5,14 +5,15 @@ import torch
 import re
 import os
 import argparse
-from joblib import load
+from joblib import load, Parallel, delayed
 from torch.autograd import Variable
 from statsmodels.stats.multitest import multipletests
 
 from util.bids import DataSink
 from util.myosuite import get_activations
 
-ALPHA = 0.01 # for rejection mask
+
+ALPHA = 0.05 # for rejection mask
 BIDS_DIR = 'bids_temp'
 POLICY_FILE = 'best_policy.pickle'
 
@@ -102,27 +103,32 @@ def main(layout, sub):
     model = EncodingModel(policy, scaler, average_coef[:, mask], non_empty)
 
     ## and explain predictions!
+    def get_shapvals(background, test_samps):
+        torch.set_grad_enabled(True)
+        explainer = shap.DeepExplainer(
+            model = model,
+            data = Variable(torch.from_numpy(background).float()),
+        )
+        shap_values = explainer.shap_values(
+            X = Variable(torch.from_numpy(test_samps).float()),
+            check_additivity = False
+        )
+        shap_values = np.stack(shap_values, -1)
+        return shap_values
+
     np.random.seed(0)
-    torch.manual_seed(0)
-    torch.set_grad_enabled(True)
-    explainer = shap.DeepExplainer(
-        model = model,
-        data = Variable(torch.from_numpy(
-            shap.sample(X_train, N_BACKGROUND_SAMPLES)
-        ).float()),
+    background = shap.sample(X_train, N_BACKGROUND_SAMPLES)
+    test_samps = shap.sample(X_test, N_TEST_SET_SAMPLES)
+    out = Parallel(n_jobs = -1, verbose = 1)(
+        delayed(get_shapvals)(background, test_samps[i:i+1, :])
+        for i in range(len(test_samps))
     )
-    shap_values = explainer.shap_values(
-        X = Variable(torch.from_numpy(
-            shap.sample(X_test, N_TEST_SET_SAMPLES)
-        ).float()),
-        check_additivity = False
-    )
+    shap_values = np.concatenate(out)
 
     # aggregate shap values over feature types and project to fsaverage space
-    sv = np.stack(shap_values, -1) # stack targets
     feat_space_svs = []
     for ft in ('pos', 'vel', 'err'):
-        _sv = sv[:, feat_types == ft, :].sum(1) # sum over feat spaces
+        _sv = shap_values[:, feat_types == ft, :].sum(1) # sum over feat spaces
         # global shap val is (absolute) central tendency over examples
         _sv = np.nanmean(np.abs(_sv), 0)
         # now project back to fsaverage
