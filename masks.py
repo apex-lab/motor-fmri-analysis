@@ -106,6 +106,16 @@ def main(layout, sub):
         extension = '.npy'
     )
     np.save(fpath, tfce_stat, allow_pickle = False)
+    fpath = sink.get_path(
+        subject = sub,
+        session = '1',
+        task = 'motor',
+        desc = 'difference',
+        datatype = 'func',
+        suffix = 'H0',
+        extension = '.npy'
+    )
+    np.save(fpath, H0_clust, allow_pickle = False)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
