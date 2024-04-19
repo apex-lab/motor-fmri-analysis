@@ -7,7 +7,7 @@ import os
 from bids import BIDSLayout
 from util.bids import DataSink
 
-from sklearn.metrics import accuracy_score as score
+from sklearn.metrics import balanced_accuracy_score as score
 from sklearn.model_selection import LeaveOneGroupOut
 from sklearn.pipeline import make_pipeline
 from sklearn.decomposition import PCA
@@ -67,7 +67,7 @@ def _permutation(y, y_hat, run, seed = None):
 
 def permutation_test(y, y_hat, run):
     print('Starting permutation test...')
-    accuracy = score(y, hat)
+    accuracy = score(y, y_hat)
     parallel, p_func, n_jobs = parallel_func(
         _permutation, n_jobs = -1,
         verbose = 1
@@ -87,7 +87,7 @@ def shuffle_between_models(yh0, yh1, seed = None):
     yh = np.stack([yh0, yh1], axis = 0)
     return yh[idxs_mod, idxs], yh[~idxs_mod, idxs]
 
-def _permutation(y, y_hat0, y_hat1, seed = None):
+def _permutation_paired(y, y_hat0, y_hat1, seed = None):
     if seed == 0:
         yh0, yh1 = y_hat0, y_hat1
     else:
@@ -98,7 +98,7 @@ def permutation_test_paired(y, y_hat0, y_hat1):
     print('Starting paired permutation test...')
     accuracy = score(y, hat)
     parallel, p_func, n_jobs = parallel_func(
-        _permutation, n_jobs = -1,
+        _permutation_paired, n_jobs = -1,
         verbose = 1
     )
     out = parallel(
@@ -246,6 +246,7 @@ def main(layout, sub):
         extension = '.tsv'
     )
     df.to_csv(fpath, sep = '\t', index = False, na_rep = 'n/a')
+    
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
