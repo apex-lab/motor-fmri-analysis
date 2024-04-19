@@ -67,7 +67,6 @@ def _permutation(y, y_hat, run, seed = None):
 
 def permutation_test(y, y_hat, run):
     print('Starting permutation test...')
-    accuracy = score(y, y_hat)
     parallel, p_func, n_jobs = parallel_func(
         _permutation, n_jobs = -1,
         verbose = 1
@@ -96,7 +95,6 @@ def _permutation_paired(y, y_hat0, y_hat1, seed = None):
 
 def permutation_test_paired(y, y_hat0, y_hat1):
     print('Starting paired permutation test...')
-    accuracy = score(y, hat)
     parallel, p_func, n_jobs = parallel_func(
         _permutation_paired, n_jobs = -1,
         verbose = 1
@@ -246,7 +244,7 @@ def main(layout, sub):
         extension = '.tsv'
     )
     df.to_csv(fpath, sep = '\t', index = False, na_rep = 'n/a')
-    
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
