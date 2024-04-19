@@ -203,6 +203,7 @@ def main(layout, sub):
     save_model(sink, sub, name, model, filters, patterns, null_scores)
 
     name = 'visuomotor'
+    visuomotor = name
     mask = load_subject_mask(layout, sub, mask_type = 'control')
     model, y_hat[name], filters, patterns = make_model(X, y, run, mask)
     # now compare predictions to chance
@@ -222,7 +223,19 @@ def main(layout, sub):
         subject = sub,
         session = '2',
         task = 'agency',
-        desc = 'delta',
+        desc = 'cortexVtheory',
+        datatype = 'func',
+        suffix = 'scores',
+        extension = '.npy'
+    )
+    np.save(fpath, null_delta, allow_pickle = False)
+
+    null_delta = permutation_test_paired(y, y_hat[visuomotor], y_hat[theory])
+    fpath = sink.get_path(
+        subject = sub,
+        session = '2',
+        task = 'agency',
+        desc = 'visuomotorVtheory',
         datatype = 'func',
         suffix = 'scores',
         extension = '.npy'
