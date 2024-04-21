@@ -7,13 +7,14 @@ import os
 from bids import BIDSLayout
 from util.bids import DataSink
 
-from sklearn.metrics import balanced_accuracy_score as score
 from sklearn.model_selection import LeaveOneGroupOut
 from sklearn.pipeline import make_pipeline
 from sklearn.decomposition import PCA
 from sklearn.model_selection import cross_val_predict
 from sklearn.linear_model import LogisticRegressionCV
 from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import auc, roc_curve
+from scipy.interpolate import interp1d
 
 from mne.decoding import LinearModel
 from mne.parallel import parallel_func
@@ -23,6 +24,7 @@ from joblib import dump
 
 BIDS_PATH = 'bids_temp'
 N_PERMUTATIONS = 5000
+
 
 def load_subject_data(layout, sub):
     '''
@@ -58,12 +60,26 @@ def shuffle_within_runs(v, runs, seed = None):
         v[runs == r] = v_run
     return v
 
+def score(y, y_hat, run):
+    auroc = []
+    fpr_interp = np.linspace(0, 1., 100)
+    tpr_interp = []
+    for r in np.unique(run):
+        fpr, tpr, _ = roc_curve(y[run == r], y_hat[run == r])
+        auroc.append(auc(fpr, tpr))
+        interp_func = interp1d(x = fpr, y = tpr)
+        tpr = interp_func(fpr_interp)
+        tpr[0] = 0. # always acheivable for fpr==0
+        tpr_interp.append(tpr)
+    tpr = np.mean(np.stack(tpr_interp, axis = 0), 0)
+    return np.mean(auroc), fpr_interp, tpr
+
 def _permutation(y, y_hat, run, seed = None):
     if seed == 0:
         yh = y_hat
     else:
         yh = shuffle_within_runs(y_hat, run, seed)
-    return score(y, yh)
+    return score(y, yh, run)
 
 def permutation_test(y, y_hat, run):
     print('Starting permutation test...')
@@ -75,8 +91,11 @@ def permutation_test(y, y_hat, run):
         p_func(y, y_hat, run, seed = i)
         for i in range(N_PERMUTATIONS + 1)
     )
-    H0 = np.array(out)
-    return H0
+    auroc, fpr, tpr = zip(*out)
+    auroc = np.array(auroc)
+    fpr = np.stack(fpr)
+    tpr = np.stack(tpr)
+    return auroc, np.stack([fpr, tpr], axis = 1)
 
 def shuffle_between_models(yh0, yh1, seed = None):
     rng = np.random.default_rng(seed)
@@ -86,21 +105,21 @@ def shuffle_between_models(yh0, yh1, seed = None):
     yh = np.stack([yh0, yh1], axis = 0)
     return yh[idxs_mod, idxs], yh[~idxs_mod, idxs]
 
-def _permutation_paired(y, y_hat0, y_hat1, seed = None):
+def _permutation_paired(y, y_hat0, y_hat1, run, seed = None):
     if seed == 0:
         yh0, yh1 = y_hat0, y_hat1
     else:
         yh0, yh1 = shuffle_between_models(y_hat0, y_hat1, seed)
-    return score(y, yh0) - score(y, yh1)
+    return score(y, yh0, run)[0] - score(y, yh1, run)[0]
 
-def permutation_test_paired(y, y_hat0, y_hat1):
+def permutation_test_paired(y, y_hat0, y_hat1, run):
     print('Starting paired permutation test...')
     parallel, p_func, n_jobs = parallel_func(
         _permutation_paired, n_jobs = -1,
         verbose = 1
     )
     out = parallel(
-        p_func(y, y_hat0, y_hat1, seed = i)
+        p_func(y, y_hat0, y_hat1, run, seed = i)
         for i in range(N_PERMUTATIONS + 1)
     )
     H0 = np.array(out)
@@ -131,7 +150,8 @@ def make_model(X, y, run, mask):
         groups = run,
         cv = LeaveOneGroupOut(),
         n_jobs = -1,
-        verbose = 1
+        verbose = 1,
+        method = 'decision_function' # i.e. log-odds
     )
     # now fit final model and extract model coefs & "patterns" as Haufe et al.
     lasso_pcr.fit(x, y)
@@ -141,7 +161,7 @@ def make_model(X, y, run, mask):
     patterns[mask] = get_coef(lasso_pcr, 'patterns_', inverse_transform = True)
     return lasso_pcr, y_hat, filters, patterns
 
-def save_model(sink, sub, name, model, filters, patterns, H0):
+def save_model(sink, sub, name, model, filters, patterns, scores, roc):
     fpath = sink.get_path(
         subject = sub,
         session = '2',
@@ -168,10 +188,20 @@ def save_model(sink, sub, name, model, filters, patterns, H0):
         task = 'agency',
         desc = name,
         datatype = 'func',
-        suffix = 'scores',
+        suffix = 'auc',
         extension = '.npy'
     )
-    np.save(fpath, H0, allow_pickle = False)
+    np.save(fpath, scores, allow_pickle = False)
+    fpath = sink.get_path(
+        subject = sub,
+        session = '2',
+        task = 'agency',
+        desc = name,
+        datatype = 'func',
+        suffix = 'roc',
+        extension = '.npy'
+    )
+    np.save(fpath, roc, allow_pickle = False)
     fpath = sink.get_path(
         subject = sub,
         session = '2',
@@ -199,45 +229,57 @@ def main(layout, sub):
     mask = load_subject_mask(layout, sub, mask_type = 'difference')
     model, y_hat[name], filters, patterns = make_model(X, y, run, mask)
     # now compare predictions to chance
-    null_scores = permutation_test(y, y_hat[name], run)
-    save_model(sink, sub, name, model, filters, patterns, null_scores)
+    null_scores, roc = permutation_test(y, y_hat[name], run)
+    save_model(sink, sub, name, model, filters, patterns, null_scores, roc)
 
     name = 'visuomotor'
-    visuomotor = name
+    control = name
     mask = load_subject_mask(layout, sub, mask_type = 'control')
     model, y_hat[name], filters, patterns = make_model(X, y, run, mask)
     # now compare predictions to chance
-    null_scores = permutation_test(y, y_hat[name], run)
-    save_model(sink, sub, name, model, filters, patterns, null_scores)
+    null_scores, roc = permutation_test(y, y_hat[name], run)
+    save_model(sink, sub, name, model, filters, patterns, null_scores, roc)
 
     name = 'cortex'
     brain = name # save for later
     mask = whole_brain_mask(X)
     model, y_hat[name], filters, patterns = make_model(X, y, run, mask)
     # now compare predictions to chance
-    null_scores = permutation_test(y, y_hat[name], run)
-    save_model(sink, sub, name, model, filters, patterns, null_scores)
+    null_scores, roc = permutation_test(y, y_hat[name], run)
+    save_model(sink, sub, name, model, filters, patterns, null_scores, roc)
 
-    null_delta = permutation_test_paired(y, y_hat[brain], y_hat[theory])
+    null_delta = permutation_test_paired(y, y_hat[brain], y_hat[theory], run)
     fpath = sink.get_path(
         subject = sub,
         session = '2',
         task = 'agency',
         desc = 'cortexVtheory',
         datatype = 'func',
-        suffix = 'scores',
+        suffix = 'auc',
         extension = '.npy'
     )
     np.save(fpath, null_delta, allow_pickle = False)
 
-    null_delta = permutation_test_paired(y, y_hat[visuomotor], y_hat[theory])
+    null_delta = permutation_test_paired(y, y_hat[control], y_hat[theory], run)
     fpath = sink.get_path(
         subject = sub,
         session = '2',
         task = 'agency',
         desc = 'visuomotorVtheory',
         datatype = 'func',
-        suffix = 'scores',
+        suffix = 'auc',
+        extension = '.npy'
+    )
+    np.save(fpath, null_delta, allow_pickle = False)
+
+    null_delta = permutation_test_paired(y, y_hat[brain], y_hat[control], run)
+    fpath = sink.get_path(
+        subject = sub,
+        session = '2',
+        task = 'agency',
+        desc = 'cortexVvisuomotor',
+        datatype = 'func',
+        suffix = 'auc',
         extension = '.npy'
     )
     np.save(fpath, null_delta, allow_pickle = False)
@@ -253,7 +295,7 @@ def main(layout, sub):
         task = 'agency',
         desc = 'predictions',
         datatype = 'func',
-        suffix = 'yhat',
+        suffix = 'logodds',
         extension = '.tsv'
     )
     df.to_csv(fpath, sep = '\t', index = False, na_rep = 'n/a')
