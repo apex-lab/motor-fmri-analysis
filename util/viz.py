@@ -8,6 +8,7 @@ from cortex.testing_utils import has_installed
 import cortex
 
 import numpy as np
+import os
 
 BRIGHTNESS_MULTIPLIER = 3.5
 
@@ -188,3 +189,30 @@ def plot_decoding_roc(layout, sub, ax, legend = True):
     ax.set_ylabel('true positive rate')
     if legend:
         ax.legend()
+
+def plot_shap(layout, sub, ax, label = True, label_fontsize = 30):
+    f = layout.get(subject = sub, suffix = 'shap')[0]
+    shap = np.load(f)
+    plot_fsaverage_rgb(shap, ax)
+    if label:
+        ax.set_title('sub-%s'%sub, size = label_fontsize)
+
+def crop_screenshot(screenshot):
+    nonwhite_pix = (screenshot != 255).any(-1)
+    nonwhite_row = nonwhite_pix.any(1)
+    nonwhite_col = nonwhite_pix.any(0)
+    cropped_screenshot = screenshot[nonwhite_row][:, nonwhite_col]
+    return cropped_screenshot
+
+def screenshot_mpl():
+    from tempfile import TemporaryDirectory
+    with TemporaryDirectory() as tmp:
+        fpath = os.path.join(tmp, 'tmp.jpeg')
+        plt.savefig(fpath, dpi = 500, bbox_inches = 'tight')
+        im = plt.imread(fpath)
+    return im
+
+def display_screenshot(im, ax):
+    cim = crop_screenshot(im)
+    ax.imshow(cim)
+    ax.axis("off")
