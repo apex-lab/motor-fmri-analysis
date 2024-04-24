@@ -65,6 +65,17 @@ def zoom_visual_cortex(ax):
     h = (ylim[1] - ylim[0])/2
     ax.set_ylim(-.35*h, .2*h)
 
+def zoom_visual_cortex_more(ax):
+    '''
+    zooms into visual cortex for a pycortex plot
+    '''
+    xlim = ax.get_xlim()
+    w = (xlim[1] - xlim[0])/2
+    ax.set_xlim(-.125*w, .125*w) # zoom to visual cortex
+    ylim = ax.get_ylim()
+    h = (ylim[1] - ylim[0])/2
+    ax.set_ylim(-.1*h, .25*h)
+
 def plot_fsaverage_rgb(data, ax = None):
     '''
     data : np.array of shape (3, )
