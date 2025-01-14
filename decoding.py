@@ -214,7 +214,7 @@ def save_model(sink, sub, name, model, filters, patterns, scores, roc):
     dump(model, fpath)
 
 
-def main(layout, sub):
+def main(layout, sub, mask_to_use = 'individual'):
 
     X, y, run, events  = load_subject_data(layout, sub)
     y_hat = dict() # to hold predictions from different models
@@ -224,23 +224,29 @@ def main(layout, sub):
     )
 
     # first fit model with the theory-driven mask
-    name = 'theory'
+    name = 'theory' if mask_to_use == 'individual' else 'theoryGroup'
     theory = name # save for later
-    mask = load_subject_mask(layout, sub, mask_type = 'difference')
+    if mask_to_use == 'individual':
+        mask = load_subject_mask(layout, sub, mask_type = 'difference')
+    elif mask_to_use == 'group':
+        mask = load_subject_mask(layout, 'group', mask_type = 'difference')
     model, y_hat[name], filters, patterns = make_model(X, y, run, mask)
     # now compare predictions to chance
     null_scores, roc = permutation_test(y, y_hat[name], run)
     save_model(sink, sub, name, model, filters, patterns, null_scores, roc)
 
-    name = 'visuomotor'
+    name = 'visuomotor' if mask_to_use == 'individual' else 'visuomotorGroup'
     control = name
-    mask = load_subject_mask(layout, sub, mask_type = 'control')
+    if mask_to_use == 'individual':
+        mask = load_subject_mask(layout, sub, mask_type = 'control')
+    elif mask_to_use == 'group':
+        mask = load_subject_mask(layout, 'group', mask_type = 'control')
     model, y_hat[name], filters, patterns = make_model(X, y, run, mask)
     # now compare predictions to chance
     null_scores, roc = permutation_test(y, y_hat[name], run)
     save_model(sink, sub, name, model, filters, patterns, null_scores, roc)
 
-    name = 'cortex'
+    name = 'cortex' if mask_to_use == 'individual' else 'cortexGroup'
     brain = name # save for later
     mask = whole_brain_mask(X)
     model, y_hat[name], filters, patterns = make_model(X, y, run, mask)
@@ -248,12 +254,13 @@ def main(layout, sub):
     null_scores, roc = permutation_test(y, y_hat[name], run)
     save_model(sink, sub, name, model, filters, patterns, null_scores, roc)
 
+    sufx = '' if mask_to_use == 'individual' else 'Group'
     null_delta = permutation_test_paired(y, y_hat[brain], y_hat[theory], run)
     fpath = sink.get_path(
         subject = sub,
         session = '2',
         task = 'agency',
-        desc = 'cortexVtheory',
+        desc = 'cortexVtheory%s'%sufx,
         datatype = 'func',
         suffix = 'auc',
         extension = '.npy'
@@ -265,7 +272,7 @@ def main(layout, sub):
         subject = sub,
         session = '2',
         task = 'agency',
-        desc = 'visuomotorVtheory',
+        desc = 'visuomotorVtheory%s'%sufx,
         datatype = 'func',
         suffix = 'auc',
         extension = '.npy'
@@ -277,7 +284,7 @@ def main(layout, sub):
         subject = sub,
         session = '2',
         task = 'agency',
-        desc = 'cortexVvisuomotor',
+        desc = 'cortexVvisuomotor%s'%sufx,
         datatype = 'func',
         suffix = 'auc',
         extension = '.npy'
@@ -293,7 +300,7 @@ def main(layout, sub):
         subject = sub,
         session = '2',
         task = 'agency',
-        desc = 'predictions',
+        desc = 'predictions%s'%sufx,
         datatype = 'func',
         suffix = 'logodds',
         extension = '.tsv'
@@ -304,6 +311,7 @@ def main(layout, sub):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('sub', type = str)
+    parser.add_argument('mask', type = str)
     args = parser.parse_args()
     layout = BIDSLayout(BIDS_PATH, derivatives = True)
     if args.sub == 'all':
@@ -311,11 +319,16 @@ if __name__ == '__main__':
     else:
         subs = [args.sub]
     for sub in subs:
-        mask = load_subject_mask(layout, sub, 'difference')
-        if mask.sum() == 0:
-            print('Skipping sub-%s...'%sub)
-        else:
+        if args.mask == 'group':
             print('Starting decoding for sub-%s...'%sub)
-            main(layout, sub)
+            main(layout, sub, 'group')
             print('Subject %s complete!'%sub)
+        else:
+            mask = load_subject_mask(layout, sub, 'difference')
+            if mask.sum() == 0:
+                print('Skipping sub-%s...'%sub)
+            else:
+                print('Starting decoding for sub-%s...'%sub)
+                main(layout, sub, 'individual')
+                print('Subject %s complete!'%sub)
     print('Done!!!')

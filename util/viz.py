@@ -24,7 +24,8 @@ if not hasattr(cortex.db, fsaverage):
     assert hasattr(cortex.db, fsaverage)
 
 def plot_fsaverage(data, mask = None, sulci = True, positive = False,
-                        vlim = None, cmap = None, ax = None, colorbar = True):
+                        vlim = None, cmap = None, ax = None, colorbar = True,
+                        cbar_loc = 'center'):
     '''
     Plots a (327684,) np.array `data` onto fsaverage surface
     using pycortex
@@ -44,7 +45,7 @@ def plot_fsaverage(data, mask = None, sulci = True, positive = False,
     vertex = cortex.Vertex(_data, 'fsaverage', **color_kwargs)
     fig = cortex.quickflat.make_figure(
         vertex,
-        colorbar_location = 'center',
+        colorbar_location = cbar_loc,
         with_rois = True,
         with_sulci = sulci,
         with_curvature = True,
@@ -153,48 +154,62 @@ def plot_decoding_model(layout, sub, show_sulci = True, model = 'cortex',
         )
     return fig
 
-def plot_decoding_roc(layout, sub, ax, legend = True):
-    f = layout.get(
-        subject = sub,
-        scope = 'decoding',
-        desc = 'theory',
-        suffix = 'roc'
-    )[0]
-    roc = np.load(f)
-    for i in range(roc.shape[0]):
-        lab = 'permutations' if i == 0 else None
-        fpr = roc[i, 0, :]
-        tpr = roc[i, 1, :]
-        ax.plot(fpr, tpr, alpha = .5, color = 'grey', label = lab)
+def load_roc(layout, sub, model):
+    if sub == 'group':
+        fs = layout.get(
+            scope = 'decoding',
+            desc = model + 'Group',
+            suffix = 'roc'
+        )
+        roc = np.stack([np.load(f) for f in fs], 0).mean(0)
+    else:
+        f = layout.get(
+            subject = sub,
+            scope = 'decoding',
+            desc = model,
+            suffix = 'roc'
+        )[0]
+        roc = np.load(f)
+    return roc
+
+def plot_decoding_roc(layout, sub, ax, legend = True, perc_ci = .9, letters = True):
+    roc = load_roc(layout, sub, 'theory')
+    fpr = roc[0, 0, :]
+    # plot confidence band for permutation dist of roc curve
+    tail = 1 - perc_ci
+    upper = np.quantile(roc[:, 1, :], 1 - tail/2, axis = 0)
+    lower = np.quantile(roc[:, 1, :], tail/2, axis = 0)
+    ax.fill_between(fpr, lower, upper, alpha = .5, color = 'grey', label = 'permutations')
     ax.plot((0, 1), (0, 1), color = 'black', linestyle = '--')
+    # and now plot observed curves
     ax.plot(
         roc[0, 0, :], roc[0, 1, :],
         color = 'red',
-        label = '(a) theory mask'
+        label = '(a) theory mask' if letters else 'theory mask (group)'
         )
-    f = layout.get(
-        subject = sub,
-        scope = 'decoding',
-        desc = 'visuomotor',
-        suffix = 'roc'
-    )[0]
-    roc = np.load(f)
+    if sub == 'group': # also plot average curve using within-sub masks
+        fs = layout.get(
+            scope = 'decoding',
+            desc = 'theory',
+            suffix = 'roc'
+        )
+        roc = np.stack([np.load(f) for f in fs], 0).mean(0)
+        ax.plot(
+            roc[0, 0, :], roc[0, 1, :],
+            color = 'firebrick',
+            label = 'theory mask (individual)'
+            )
+    roc = load_roc(layout, sub, 'visuomotor')
     ax.plot(
         roc[0, 0, :], roc[0, 1, :],
         color = 'orange',
-        label = '(b) visuomotor mask'
+        label = '(b) visuomotor mask' if letters else 'visuomotor mask'
     )
-    f = layout.get(
-        subject = sub,
-        scope = 'decoding',
-        desc = 'cortex',
-        suffix = 'roc'
-    )[0]
-    roc = np.load(f)
+    roc = load_roc(layout, sub, 'cortex')
     ax.plot(
         roc[0, 0, :], roc[0, 1, :],
         color = 'blue',
-        label = '(c) whole cortex'
+        label = '(c) whole cortex' if letters else 'whole cortex'
     )
     ax.set_xlabel('false positive rate')
     ax.set_ylabel('true positive rate')

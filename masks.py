@@ -19,14 +19,23 @@ def main(layout, sub):
     )
 
     # load voxelwise null distributions
-    control_f, delta_f, model_f = layout.get(
-        subject = sub,
-        suffix = 'r2',
-        scope = 'voxelwise'
-        )
-    H0_control = np.load(control_f.path)
-    H0_delta = np.load(delta_f.path)
-    H0_model = np.load(model_f.path)
+    if sub == 'group': # load average R2's and their null dists
+        fs = layout.get(desc = 'control', suffix = 'r2', scope = 'voxelwise')
+        H0_control = np.stack([np.load(f.path) for f in fs], axis = 0).mean(0)
+        fs = layout.get(desc = 'model', suffix = 'r2', scope = 'voxelwise')
+        H0_model = np.stack([np.load(f.path) for f in fs], axis = 0).mean(0)
+        fs = layout.get(desc = 'difference', suffix = 'r2', scope = 'voxelwise')
+        H0_delta = np.stack([np.load(f.path) for f in fs], axis = 0).mean(0)
+    else: # load R2's and null dists just for one subject 
+        control_f, delta_f, model_f = layout.get(
+            subject = sub,
+            suffix = 'r2',
+            scope = 'voxelwise'
+            )
+        H0_control = np.load(control_f.path)
+        H0_delta = np.load(delta_f.path)
+        H0_model = np.load(model_f.path)
+
 
     # visuomotor mask is just FDR-corrected mask for control model > chance
     ps = (H0_control[0,:] <= H0_control).mean(0)
